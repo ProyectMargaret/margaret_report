@@ -5,6 +5,8 @@ library(RSQLite)
 library(shinydashboard)
 library(DT)
 library(shinyjs)
+library(tidyverse)
+
 
 # Getting data
 PROYECTO <- read_csv("https://docs.google.com/spreadsheets/d/1SuRCahhlUWx5F1zD_gND4sPVsGpvjEv8v03IY_-5UhI/export?format=csv&gid=0")
@@ -12,7 +14,7 @@ ENTIDAD_EXTERNA <- read_csv("https://docs.google.com/spreadsheets/d/1SuRCahhlUWx
 PRODUCTOS <- read_csv("https://docs.google.com/spreadsheets/d/1SuRCahhlUWx5F1zD_gND4sPVsGpvjEv8v03IY_-5UhI/export?format=csv&gid=1113008466")
 GRUPO <- read_csv("https://docs.google.com/spreadsheets/d/1SuRCahhlUWx5F1zD_gND4sPVsGpvjEv8v03IY_-5UhI/export?format=csv&gid=944537945")
 PROGRAMA <- read_csv("https://docs.google.com/spreadsheets/d/1SuRCahhlUWx5F1zD_gND4sPVsGpvjEv8v03IY_-5UhI/export?format=csv&gid=705674233")
-ADSCRIPCION <- read_csv("https://docs.google.com/spreadsheets/d/1u2XbiilAR235OySiuacJ4T5ASGRO3HXbNziz-nSnF2E/export?format=csv&gid=446420086")
+ADSCRIPCION <- read_csv("https://docs.google.com/spreadsheets/d/1SuRCahhlUWx5F1zD_gND4sPVsGpvjEv8v03IY_-5UhI/export?format=csv&gid=536733097")
 
 # Create a connection
 con <- dbConnect(RSQLite::SQLite(), "my_database.sqlite")
@@ -25,24 +27,13 @@ dbWriteTable(con, "GRUPO", GRUPO, overwrite = TRUE)
 dbWriteTable(con, "PROGRAMA", PROGRAMA, overwrite = TRUE)
 dbWriteTable(con, "ADSCRIPCION", ADSCRIPCION, overwrite = TRUE)
 
-# Remove duplicate products
-query <- "
-  DELETE FROM PRODUCTOS
-  WHERE ROWID NOT IN (
-    SELECT MIN(ROWID)
-    FROM PRODUCTOS
-    GROUP BY ID_PROYECTO, CATEGORIA, NOMBRE
-  )
-"
-dbExecute(con, query)
-
 # Define UI for application
 ui <- dashboardPage(
   dashboardHeader(title = "Interact with the PROGRAMA and GRUPO tables"),
   dashboardSidebar(
     sidebarMenu(
-      menuItem("Database", tabName = "database", icon = icon("database")),
-      menuItem("Proyecto", tabName = "proyecto", icon = icon("filter")),
+      menuItem("Informacion Financiera", tabName = "database", icon = icon("database")),
+      menuItem("Productos comprometidos", tabName = "proyecto", icon = icon("filter")),
       menuItem("Investigadores", tabName = "investigadores", icon = icon("users"))
     )
   ),
@@ -64,7 +55,7 @@ ui <- dashboardPage(
           column(
             12,
             mainPanel(
-              selectInput("filas_mostradas", "Filas mostradas:", choices = c(10, 25, 50, 100), selected = 10)
+              selectInput("filas_mostradas_db", "Filas mostradas:", choices = c(10, 25, 50, 100), selected = 10)
             )
           ),
           column(
@@ -81,7 +72,7 @@ ui <- dashboardPage(
           column(
             12,
             mainPanel(
-              selectInput("filas_mostradas", "Filas mostradas:", choices = c(10, 25, 50, 100), selected = 10)
+              selectInput("filas_mostradas_proyecto", "Filas mostradas:", choices = c(10, 25, 50, 100), selected = 10)
             )
           ),
           column(
@@ -98,7 +89,7 @@ ui <- dashboardPage(
           column(
             12,
             mainPanel(
-              selectInput("filas_mostradas", "Filas mostradas:", choices = c(10, 25, 50, 100), selected = 10)
+              selectInput("filas_mostradas_investigadores", "Filas mostradas:", choices = c(10, 25, 50, 100), selected = 10)
             )
           ),
           column(
@@ -115,21 +106,16 @@ ui <- dashboardPage(
 
 # Define server logic
 server <- function(input, output, session) {
-  # Load PRODUCTOS data
-  PRODUCTOS <- reactive({
-    query <- "SELECT DISTINCT * FROM PRODUCTOS"
-    dbGetQuery(con, query)
-  })
-  
-  # Reactive expression to fetch data based on input$unidad, input$region, input$programa, and input$grupo
+  # Load data for the "Informacion Financiera" table
+  # Load data for the "Informacion Financiera" table
   data <- reactive({
-    query <- "SELECT PROYECTO.NOMBRE_PROYECTO, PROYECTO.FECHA_INICIO, PROYECTO.FECHA_FIN, 
-              PROYECTO.TOTAL_PRESUPUESTO_INTERNO, PROYECTO.PRESUPUESTO_EXTERNO, PROYECTO.PRESUPUESTO_TOTAL,
-              ADSCRIPCION.ENTIDAD
-              FROM PROYECTO
-              JOIN PROGRAMA ON PROYECTO.ID_PROYECTO = PROGRAMA.ID_PROYECTO
-              JOIN GRUPO ON PROYECTO.ID_PROYECTO = GRUPO.ID_PROYECTO
-              JOIN ADSCRIPCION ON PROYECTO.ID_PROYECTO = ADSCRIPCION.ID_PROYECTO"
+    query <- "SELECT DISTINCT PROYECTO.NOMBRE_PROYECTO, PROYECTO.FECHA_INICIO, PROYECTO.FECHA_FIN, 
+            PROYECTO.TOTAL_PRESUPUESTO_INTERNO, PROYECTO.PRESUPUESTO_EXTERNO, PROYECTO.PRESUPUESTO_TOTAL,
+            ADSCRIPCION.ENTIDAD
+            FROM PROYECTO
+            JOIN PROGRAMA ON PROYECTO.ID_PROYECTO = PROGRAMA.ID_PROYECTO
+            JOIN GRUPO ON PROYECTO.ID_PROYECTO = GRUPO.ID_PROYECTO
+            JOIN ADSCRIPCION ON PROYECTO.ID_PROYECTO = ADSCRIPCION.ID_PROYECTO"
     
     # Construct WHERE clause based on the selected values
     conditions <- c()
@@ -150,12 +136,18 @@ server <- function(input, output, session) {
       query <- paste(query, "WHERE", paste(conditions, collapse = " AND "))
     }
     
-    dbGetQuery(con, query)
+    data <- dbGetQuery(con, query)
+    
+    # Remove duplicated rows based on NOMBRE_PROYECTO column
+    data <- data %>% distinct(NOMBRE_PROYECTO, .keep_all = TRUE)
+    
+    data
   })
   
-  # Output the table
+  
+  # Render the "Informacion Financiera" table
   output$table <- DT::renderDataTable({
-    datatable(data(), extensions = c("Buttons"), options = list(pageLength = 10,
+    datatable(data(), extensions = c("Buttons"), options = list(pageLength = input$filas_mostradas_db,
                                                                 dom = "Bfrtip",
                                                                 buttons = list("copy",
                                                                                list(extend = "collection",
@@ -165,7 +157,7 @@ server <- function(input, output, session) {
     )
   })
   
-  # Load data for the proyectos table
+  # Load data for the "Productos comprometidos" table
   proyectos_data <- reactive({
     query <- "SELECT NOMBRE_PROYECTO, PRODUCTOS.CATEGORIA, PRODUCTOS.NOMBRE
             FROM PROYECTO
@@ -173,10 +165,10 @@ server <- function(input, output, session) {
     dbGetQuery(con, query)
   })
   
-  # Output the proyectos table
+  # Render the "Productos comprometidos" table
   output$productos_table <- DT::renderDataTable({
     datatable(proyectos_data(), options = list(
-      pageLength = 10,
+      pageLength = input$filas_mostradas_proyecto,
       dom = "Bfrtip",
       buttons = list("copy",
                      list(extend = "collection",
@@ -186,7 +178,7 @@ server <- function(input, output, session) {
     ))
   })
   
-  # Load data for the investigadores table
+  # Load data for the "Investigadores" table
   investigadores_data <- reactive({
     query <- "SELECT PROYECTO.ID_PROYECTO,PROYECTO.NOMBRE_PROYECTO, ADSCRIPCION.ADSCRIPCION AS Investigador, ADSCRIPCION.TIPO AS Rol, 
             ADSCRIPCION.HORAS_SEMANALES, ADSCRIPCION.TOTAL_HORAS
@@ -195,10 +187,10 @@ server <- function(input, output, session) {
     dbGetQuery(con, query)
   })
   
-  # Output the investigadores table
+  # Render the "Investigadores" table
   output$investigadores_table <- DT::renderDataTable({
     datatable(investigadores_data(), options = list(
-      pageLength = input$filas_mostradas,  # Obtener el número de filas seleccionadas
+      pageLength = input$filas_mostradas_investigadores,
       dom = "Bfrtip",
       buttons = list("copy",
                      list(extend = "collection",
@@ -207,7 +199,6 @@ server <- function(input, output, session) {
       )
     ))
   })
-
 }
 
 # Run the application
